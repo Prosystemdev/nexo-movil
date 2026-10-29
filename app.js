@@ -3,7 +3,7 @@
    - Los datos (datos.json.enc, AES-256-GCM) se guardan tal como llegan y se descifran en memoria al desbloquear.
    - Fuente de datos: Dropbox (si config.js tiene la clave de aplicación) o «Abrir archivo» manual. */
 'use strict';
-const VERSION_APP = '0.2.0';
+const VERSION_APP = '0.3.0';
 const CFG = window.NEXO_MOVIL || {};
 const $ = (s, r) => (r || document).querySelector(s);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -40,11 +40,11 @@ async function descifrarArchivo(texto, claveHex) {
 
 /* ---------- Estado en memoria ---------- */
 let cfg = null; // { empresa, s, n, vinculadoEn, salt, sec:{iv,d} } — sec = { k, refresh, raiz } cifrado con el PIN
-let pinKey = null, sec = null, datos = null, recibido = null, pedidos = [], vista = { pest: 'articulos', lista: '', q: '', cli: null, qc: '', ped: null }, borrador = null;
+let pinKey = null, sec = null, datos = null, recibido = null, pedidos = [], msgs = { leidos: {}, acuses: [] }, vista = { pest: 'articulos', lista: '', q: '', cli: null, qc: '', ped: null }, borrador = null;
 let ultimoToque = Date.now(); const BLOQUEO_MS = 5 * 60 * 1000;
 ['click', 'touchstart', 'keydown'].forEach(ev => document.addEventListener(ev, () => { ultimoToque = Date.now(); }, { passive: true }));
 setInterval(() => { if (pinKey && Date.now() - ultimoToque > BLOQUEO_MS) bloquear(); }, 15000);
-function bloquear() { pinKey = null; sec = null; datos = null; pedidos = []; borrador = null; vista = { pest: 'articulos', lista: '', q: '', cli: null, qc: '', ped: null }; pintar(); }
+function bloquear() { pinKey = null; sec = null; datos = null; pedidos = []; msgs = { leidos: {}, acuses: [] }; borrador = null; vista = { pest: 'articulos', lista: '', q: '', cli: null, qc: '', ped: null }; pintar(); }
 
 /* ---------- Pantallas ---------- */
 const app = () => $('#app');
@@ -81,6 +81,7 @@ function pantallaPin(error) {
 }
 async function cargarDatosGuardados() {
   try { const pg = await kvGet('pedidos'); pedidos = pg ? await abrir(pg, pinKey) : []; } catch (e) { pedidos = []; }
+  try { const mg = await kvGet('msgs'); msgs = mg ? await abrir(mg, pinKey) : { leidos: {}, acuses: [] }; if (!msgs.leidos) msgs.leidos = {}; if (!Array.isArray(msgs.acuses)) msgs.acuses = []; } catch (e) { msgs = { leidos: {}, acuses: [] }; }
   datos = null; const g = await kvGet('datos'); if (!g) return;
   try { const r = await descifrarArchivo(g.raw, sec.k); datos = r.datos; recibido = g.recibido; } catch (e) { datos = null; }
 }
@@ -88,15 +89,16 @@ function datosViejos() { return datos && Date.now() - Date.parse(datos.generado)
 function cabecera() {
   const t = datos && datos.tasa;
   return `<div class="cab"><h1>${esc(datos ? datos.vendedor.nombre : 'Nexo')} · ${esc(cfg.empresa)}</h1><div class="sub">${datos ? `Datos al ${esc(fmtTS(datos.generado))}${t ? ` · Tasa Bs ${fmt(t.valor, 4)} (${esc(fmtFecha(t.fecha))})` : ''}` : 'Sin datos todavía'}</div>${datosViejos() ? '<div class="viejo">Los datos tienen más de un día: sincroniza cuando tengas señal</div>' : ''}</div>
-  <div class="pest">${[['articulos', 'Artículos'], ['clientes', 'Clientes'], ['pedidos', 'Pedidos' + (pedidos.filter(p => p.estado === 'pendiente').length ? ' (' + pedidos.filter(p => p.estado === 'pendiente').length + ')' : '')], ['ajustes', 'Ajustes']].map(([k, n]) => `<button data-p="${k}" class="${vista.pest === k && !(k === 'clientes' && vista.cli) ? 'on' : ''}">${n}</button>`).join('')}</div>`;
+  <div class="pest">${[['articulos', 'Artículos'], ['clientes', 'Clientes'], ['pedidos', 'Pedidos' + (pedidos.filter(p => p.estado === 'pendiente').length ? ' (' + pedidos.filter(p => p.estado === 'pendiente').length + ')' : '')], ['mensajes', 'Mensajes' + (msgNuevos() ? ' (' + msgNuevos() + ')' : '')], ['ajustes', 'Ajustes']].map(([k, n]) => `<button data-p="${k}" class="${vista.pest === k && !(k === 'clientes' && vista.cli) ? 'on' : ''}">${n}</button>`).join('')}</div>`;
 }
 function pantallaPrincipal() {
   app().innerHTML = cabecera() + '<div class="cuerpo" id="cuerpo"></div>';
-  document.querySelectorAll('.pest button').forEach(b => { b.onclick = () => { vista.pest = b.dataset.p; vista.cli = null; vista.ped = null; borrador = null; pantallaPrincipal(); }; });
+  document.querySelectorAll('.pest button').forEach(b => { b.onclick = () => { vista.pest = b.dataset.p; vista.cli = null; vista.ped = null; vista.msg = null; borrador = null; pantallaPrincipal(); }; });
   if (vista.pest === 'ajustes') return vistaAjustes();
   if (!datos) { $('#cuerpo').innerHTML = `<div class="tarjeta"><p>Aún no hay datos en este teléfono.</p><button class="p" id="btnSync">Sincronizar ahora</button>${mensajeFuente()}</div>`; $('#btnSync').onclick = () => sincronizar(); return; }
   if (vista.pest === 'clientes') return vista.cli ? vistaCliente() : vistaClientes();
   if (vista.pest === 'pedidos') return vistaPedidos();
+  if (vista.pest === 'mensajes') return vistaMensajes();
   return vistaArticulos();
 }
 const mensajeFuente = () => CFG.dropboxAppKey ? '' : '<p class="nota">La conexión directa con Dropbox aún no está configurada: usa «Abrir archivo» en Ajustes.</p>';
@@ -141,7 +143,8 @@ function vistaCliente() {
   const c = datos.clientes.find(x => x.id === vista.cli); if (!c) { vista.cli = null; return vistaClientes(); }
   const t = datos.tasa ? datos.tasa.valor : null, lp = (datos.listasPrecio || []).find(l => l.id === c.listaPrecioId);
   const dato = (k, v) => v ? `<div class="fila" style="margin-top:4px"><span class="chico">${k}</span><span style="text-align:right">${v}</span></div>` : '';
-  $('#cuerpo').innerHTML = `<button class="atras" id="atras">‹ Clientes</button><div class="tarjeta"><h3>${esc(c.nombre)}</h3><div class="chico">${esc(c.documento)}${c.codigo ? ' · ' + esc(c.codigo) : ''}</div>
+  const mc = mensajesVig().filter(m => m.clienteId === c.id); mc.forEach(marcarLeido);
+  $('#cuerpo').innerHTML = `<button class="atras" id="atras">‹ Clientes</button>${mc.map(m => `<div class="tarjeta aviso-msg"><div class="chico"><b>Mensaje de la oficina</b> · ${esc(fmtTS(m.creado))}</div><h3>${esc(m.titulo)}</h3><div style="white-space:pre-wrap">${esc(m.texto)}</div></div>`).join('')}<div class="tarjeta"><h3>${esc(c.nombre)}</h3><div class="chico">${esc(c.documento)}${c.codigo ? ' · ' + esc(c.codigo) : ''}</div>
     ${dato('Teléfono', c.telefono ? `<a href="tel:${esc(c.telefono)}">${esc(c.telefono)}</a>` : '')}${dato('Correo', c.correo ? `<a href="mailto:${esc(c.correo)}">${esc(c.correo)}</a>` : '')}${dato('Contacto', esc(c.contacto))}${dato('Dirección', esc(c.direccion))}
     ${dato('Condición de pago', c.condicionPago === 'credito' ? `Crédito ${c.diasCredito} días` : c.condicionPago === 'contado' ? 'Contado' : esc(c.condicionPago))}${dato('Límite de crédito', c.limiteCreditoUsd != null ? '$ ' + fmt(c.limiteCreditoUsd) : '')}${dato('Lista de precios', lp ? esc(lp.nombre) : '')}</div>
     <div class="tarjeta"><div class="fila"><h3>Facturas pendientes</h3><span class="precio">$ ${fmt(c.porCobrarUsd)}</span></div>${t ? `<div class="chico">≈ Bs ${fmt(c.porCobrarUsd * t)} a la tasa del día</div>` : ''}${c.aFavorUsd ? `<div class="chico">Saldo a favor del cliente: $ ${fmt(c.aFavorUsd)}</div>` : ''}
@@ -168,7 +171,7 @@ function vistaAjustes() {
   const bd2 = $('#btnDbx'); if (bd2) bd2.onclick = () => iniciarDropbox();
   const br = $('#btnDbxRuta'); if (br) br.onclick = async () => { let v = $('#dbxRuta').value.trim().replace(/\\/g, '/'); if (v && !v.startsWith('/')) v = '/' + v; sec.raiz = v.replace(/\/+$/, ''); cfg.sec = await sellar(sec, pinKey); await kvSet('cfg', cfg); aviso(v ? 'Carpeta guardada' : 'Carpeta borrada: se buscará sola'); };
   $('#btnNuevoCod').onclick = () => pantallaEnlace();
-  $('#btnDesenlazar').onclick = async () => { if (!confirm('Se borrarán la clave y los datos de este teléfono. ¿Continuar?')) return; await kvDel('cfg'); await kvDel('datos'); await kvDel('pedidos'); cfg = null; pinKey = null; sec = null; datos = null; pintar(); };
+  $('#btnDesenlazar').onclick = async () => { if (!confirm('Se borrarán la clave y los datos de este teléfono. ¿Continuar?')) return; await kvDel('cfg'); await kvDel('datos'); await kvDel('pedidos'); await kvDel('msgs'); cfg = null; pinKey = null; sec = null; datos = null; pintar(); };
 }
 
 /* ---------- Obtención de datos ---------- */
@@ -241,6 +244,35 @@ async function descargarDropbox(tk) {
     if (m && !probados.includes(m.path_display)) { probados.push(m.path_display); const t = await bajarDe(tk, m.path_display); if (t != null) { await guardar(m.path_display); return t; } }
   } catch (e) { /* la búsqueda es solo el último recurso */ }
   throw new Error('No encuentro los datos en Dropbox (busqué en: ' + probados.join(', ') + '). Si la carpeta está en otra ruta, escríbela en Ajustes > «Carpeta en Dropbox». Si es nueva, la oficina debe sincronizar primero.');
+}
+
+/* ---------- Mensajes de la oficina ---------- */
+const TIPO_MSG = { aviso: 'Aviso', cliente: 'Cliente', producto: 'Producto', oferta: 'Oferta' };
+const mensajesVig = () => ((datos && datos.mensajes) || []).filter(m => !m.vigenteHasta || m.vigenteHasta >= hoyLocal());
+const msgLeido = (m) => !!(m.leido || msgs.leidos[m.id]);
+const msgNuevos = () => mensajesVig().filter(m => !msgLeido(m)).length;
+async function guardarMsgs() { if (pinKey) await kvSet('msgs', await sellar(msgs, pinKey)); }
+function marcarLeido(m) { // queda constancia local y se avisa a la oficina cuando hay señal
+  if (msgLeido(m)) return; const ts = new Date().toISOString(); msgs.leidos[m.id] = ts;
+  msgs.acuses.push({ id: 'LEC-' + ts.replace(/\D/g, '').slice(0, 14) + '-' + [...crypto.getRandomValues(new Uint8Array(3))].map(x => x.toString(16).padStart(2, '0')).join(''), mensajeId: m.id, leidoEn: ts, enviado: false });
+  const ids = Object.keys(msgs.leidos); if (ids.length > 300) ids.sort((a, b) => (msgs.leidos[a] < msgs.leidos[b] ? -1 : 1)).slice(0, ids.length - 300).forEach(k => delete msgs.leidos[k]);
+  if (msgs.acuses.length > 300) msgs.acuses = msgs.acuses.filter(a => !a.enviado).concat(msgs.acuses.filter(a => a.enviado).slice(-100));
+  guardarMsgs().then(() => enviarPendientes(false)); const b = document.querySelector('.pest [data-p=mensajes]'); if (b) b.textContent = 'Mensajes' + (msgNuevos() ? ' (' + msgNuevos() + ')' : '');
+}
+function vistaMensajes() {
+  if (vista.msg) { const m = mensajesVig().find(x => x.id === vista.msg); if (m) return detalleMensaje(m); vista.msg = null; }
+  const l = mensajesVig();
+  $('#cuerpo').innerHTML = l.map(m => `<div class="tarjeta" data-msg="${esc(m.id)}" role="button"><div class="fila"><div><div class="chico"><span class="pill ${msgLeido(m) ? '' : 'ok'}">${msgLeido(m) ? esc(TIPO_MSG[m.tipo] || m.tipo) : 'Nuevo · ' + esc(TIPO_MSG[m.tipo] || m.tipo)}</span> ${esc(fmtTS(m.creado))}</div><h3 style="margin-top:6px">${esc(m.titulo)}</h3><div class="chico">${esc(m.texto.length > 90 ? m.texto.slice(0, 90) + '…' : m.texto)}</div></div></div></div>`).join('') || '<p class="nota">No hay mensajes de la oficina. Aquí verás avisos, comentarios sobre tus clientes, llegadas de producto y ofertas.</p>';
+  document.querySelectorAll('[data-msg]').forEach(el => { el.onclick = () => { vista.msg = el.dataset.msg; pantallaPrincipal(); }; });
+}
+function detalleMensaje(m) {
+  marcarLeido(m); const c = m.clienteId && datos.clientes.find(x => x.id === m.clienteId), a = m.productoId && datos.articulos.find(x => x.id === m.productoId);
+  $('#cuerpo').innerHTML = `<button class="atras" id="atras">‹ Mensajes</button><div class="tarjeta"><div class="chico"><span class="pill">${esc(TIPO_MSG[m.tipo] || m.tipo)}</span> ${esc(fmtTS(m.creado))}${m.vigenteHasta ? ' · vigente hasta ' + esc(fmtFecha(m.vigenteHasta)) : ''}</div>
+    <h3 style="margin-top:6px">${esc(m.titulo)}</h3><div style="white-space:pre-wrap;margin-top:6px">${esc(m.texto)}</div></div>
+    ${c ? `<button class="s" id="verCli">Ver cliente: ${esc(c.nombre)}</button>` : ''}${a ? `<button class="s" id="verArt">Ver artículo: ${esc(a.codigo)} ${esc(a.descripcion)}</button>` : ''}`;
+  $('#atras').onclick = () => { vista.msg = null; pantallaPrincipal(); };
+  const vc = $('#verCli'); if (vc) vc.onclick = () => { vista.msg = null; vista.pest = 'clientes'; vista.cli = c.id; pantallaPrincipal(); };
+  const va = $('#verArt'); if (va) va.onclick = () => { vista.msg = null; vista.pest = 'articulos'; vista.q = a.codigo; pantallaPrincipal(); };
 }
 
 /* ---------- Pedidos ---------- */
@@ -347,8 +379,10 @@ function vistaDetallePedido(p) {
 
 /* ---- Envío de pedidos: archivo cifrado a la carpeta «entrada» del vendedor en Dropbox ---- */
 async function cifrarPedido(p) {
-  const obj = { formato: 1, id: p.id, vm: cfg.s, creado: p.creado, fecha: p.fecha, fechaEntrega: p.fechaEntrega || '', clienteId: p.clienteId, listaPrecioId: totalesPedido(p).lista, observacion: p.observacion || '', datosDel: datos ? datos.generado : '',
-    lineas: p.lineas.map(l => { const a = artDe(l.productoId), lp = totalesPedido(p).lista; return { productoId: l.productoId, cantidad: Number(l.cantidad), precioUsd: a && a.precios && a.precios[lp] != null ? a.precios[lp] : null }; }) };
+  return cifrarObjeto({ formato: 1, id: p.id, vm: cfg.s, creado: p.creado, fecha: p.fecha, fechaEntrega: p.fechaEntrega || '', clienteId: p.clienteId, listaPrecioId: totalesPedido(p).lista, observacion: p.observacion || '', datosDel: datos ? datos.generado : '',
+    lineas: p.lineas.map(l => { const a = artDe(l.productoId), lp = totalesPedido(p).lista; return { productoId: l.productoId, cantidad: Number(l.cantidad), precioUsd: a && a.precios && a.precios[lp] != null ? a.precios[lp] : null }; }) });
+}
+async function cifrarObjeto(obj) {
   const k = await crypto.subtle.importKey('raw', hexA(sec.k), 'AES-GCM', false, ['encrypt']), iv = crypto.getRandomValues(new Uint8Array(12));
   const cifrado = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, k, enc.encode(JSON.stringify(obj)))), tag = cifrado.slice(-16), cuerpo = cifrado.slice(0, -16);
   return enc.encode(JSON.stringify({ f: 1, n: cfg.n, iv: b64.a(iv), t: b64.a(tag), d: b64.a(cuerpo) }));
@@ -359,9 +393,10 @@ async function baseParaSubir(tk) {
   try { await descargarDropbox(tk); } catch (e) { /* solo para descubrir la carpeta */ } if (sec.raiz) return sec.raiz;
   throw new Error('No encuentro tu carpeta en Dropbox: sincroniza primero o escribe la carpeta en Ajustes.');
 }
-async function subirPedido(p, tk) {
-  const base = await baseParaSubir(tk), buf = await cifrarPedido(p);
-  const r = await fetch('https://content.dropboxapi.com/2/files/upload', { method: 'POST', headers: { Authorization: 'Bearer ' + tk, 'Content-Type': 'application/octet-stream', 'Dropbox-API-Arg': JSON.stringify({ path: base.replace(/\/+$/, '') + '/entrada/' + p.id + '.json.enc', mode: 'add', autorename: false, mute: true }) }, body: buf });
+async function subirPedido(p, tk) { return subirArchivo(p.id, await cifrarPedido(p), tk); }
+async function subirArchivo(id, buf, tk) {
+  const base = await baseParaSubir(tk);
+  const r = await fetch('https://content.dropboxapi.com/2/files/upload', { method: 'POST', headers: { Authorization: 'Bearer ' + tk, 'Content-Type': 'application/octet-stream', 'Dropbox-API-Arg': JSON.stringify({ path: base.replace(/\/+$/, '') + '/entrada/' + id + '.json.enc', mode: 'add', autorename: false, mute: true }) }, body: buf });
   if (r.ok) return true; const t = await r.text();
   if (r.status === 409 && /conflict/.test(t) && !/no_write_permission|insufficient/.test(t)) return true; // ya estaba subido: no se duplica
   if (/missing_scope|files\.content\.write/.test(t)) throw new Error('Falta el permiso «files.content.write» de la app en Dropbox. Pídeselo a la oficina y luego usa Ajustes > Reconectar Dropbox.');
@@ -370,12 +405,13 @@ async function subirPedido(p, tk) {
 }
 let enviando = false;
 async function enviarPendientes(manual) {
-  const cola = pedidos.filter(p => p.estado === 'pendiente'); if (!cola.length || enviando) return;
-  if (!CFG.dropboxAppKey || !sec.refresh) { if (manual) { aviso('Conecta primero con Dropbox en Ajustes para enviar pedidos', true); vista.pest = 'ajustes'; vista.ped = null; pantallaPrincipal(); } return; }
-  if (!navigator.onLine) { if (manual) aviso('Sin señal: el pedido queda guardado y se enviará solo cuando vuelva la conexión'); return; }
+  const cola = pedidos.filter(p => p.estado === 'pendiente'), acs = msgs.acuses.filter(a => !a.enviado); if ((!cola.length && !acs.length) || enviando) return;
+  if (!CFG.dropboxAppKey || !sec.refresh) { if (manual && cola.length) { aviso('Conecta primero con Dropbox en Ajustes para enviar pedidos', true); vista.pest = 'ajustes'; vista.ped = null; pantallaPrincipal(); } return; }
+  if (!navigator.onLine) { if (manual && cola.length) aviso('Sin señal: el pedido queda guardado y se enviará solo cuando vuelva la conexión'); return; }
   enviando = true; let n = 0;
-  try { const tk = await tokenDropbox(); for (const p of cola) { try { await subirPedido(p, tk); p.estado = 'enviado'; p.error = ''; p.enviadoEn = new Date().toISOString(); n++; } catch (e) { p.error = e.message; if (manual) aviso(e.message, true); break; } } }
-  catch (e) { if (manual) aviso(e.message, true); } finally { enviando = false; await guardarPedidos(); }
+  try { const tk = await tokenDropbox(); for (const p of cola) { try { await subirPedido(p, tk); p.estado = 'enviado'; p.error = ''; p.enviadoEn = new Date().toISOString(); n++; } catch (e) { p.error = e.message; if (manual) aviso(e.message, true); break; } }
+    for (const a of acs) { try { await subirArchivo(a.id, await cifrarObjeto({ formato: 1, tipo: 'lectura', id: a.id, vm: cfg.s, mensajeId: a.mensajeId, leidoEn: a.leidoEn }), tk); a.enviado = true; } catch (e) { break; } } }
+  catch (e) { if (manual) aviso(e.message, true); } finally { enviando = false; await guardarPedidos(); await guardarMsgs(); }
   if (n) aviso(n === 1 ? 'Pedido enviado a la oficina' : `${n} pedidos enviados`); if (cfg && pinKey) pantallaPrincipal();
 }
 

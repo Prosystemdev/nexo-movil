@@ -1,5 +1,5 @@
 /* Service worker: guarda la app para que abra sin conexión. Al cambiar VERSION se renueva la copia. */
-const VERSION = 'nexo-movil-0.2.0';
+const VERSION = 'nexo-movil-0.3.0';
 const ARCHIVOS = ['./', 'index.html', 'app.js', 'config.js', 'estilos.css', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(VERSION).then(c => c.addAll(ARCHIVOS)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== VERSION).map(k => caches.delete(k)))).then(() => self.clients.claim())); });

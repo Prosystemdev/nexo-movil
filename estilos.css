@@ -7,7 +7,7 @@ body { min-height: 100vh; padding-bottom: env(safe-area-inset-bottom); }
 .cab .sub { font-size: .78rem; opacity: .92; margin-top: 2px; }
 .cab .viejo { background: #fde68a; color: #78350f; border-radius: 6px; padding: 2px 8px; margin-top: 6px; display: inline-block; font-size: .75rem; }
 .pest { display: flex; background: #fff; border-bottom: 1px solid var(--borde); position: sticky; top: 0; z-index: 4; }
-.pest button { flex: 1; padding: 12px 4px; border: 0; background: none; font-size: .95rem; color: var(--gris); border-bottom: 3px solid transparent; }
+.pest button { flex: 1; padding: 12px 2px; border: 0; background: none; font-size: .82rem; color: var(--gris); border-bottom: 3px solid transparent; }
 .pest button.on { color: var(--verde); border-color: var(--verde); font-weight: 700; }
 .cuerpo { padding: 12px 16px 40px; max-width: 720px; margin: 0 auto; }
 input, select, textarea { width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 10px; font-size: 1rem; background: #fff; color: var(--txt); }
@@ -31,3 +31,5 @@ table { width: 100%; border-collapse: collapse; font-size: .85rem; } td, th { pa
 #aviso.ver { opacity: 1; transform: none; } #aviso.error { background: var(--rojo); }
 .atras { background: none; border: 0; color: var(--verde); font-size: 1rem; padding: 4px 0; }
 .total { font-weight: 700; }
+
+.aviso-msg { border-left: 4px solid var(--verde); background: #f0fdfa; }
