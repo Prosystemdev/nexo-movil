@@ -3,7 +3,7 @@
    - Los datos (datos.json.enc, AES-256-GCM) se guardan tal como llegan y se descifran en memoria al desbloquear.
    - Fuente de datos: Dropbox (si config.js tiene la clave de aplicación) o «Abrir archivo» manual. */
 'use strict';
-const VERSION_APP = '0.4.0';
+const VERSION_APP = '0.5.0';
 const CFG = window.NEXO_MOVIL || {};
 const $ = (s, r) => (r || document).querySelector(s);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -413,6 +413,44 @@ function textoEstadoCuenta(c) {
   return l.join('\n');
 }
 
+/* ---- Documento en imagen (PNG): se comparte por WhatsApp, correo o cualquier app, o se descarga ---- */
+function modeloDocumento(p, ack) {
+  const c = clienteDe(p.clienteId), presu = p.tipoDoc === 'presupuesto';
+  if (!presu && ack && ack.aprobado) { const ap = ack.aprobado; return { titulo: 'PEDIDO ' + (ack.numero || ''), cliente: c, fecha: ap.fecha || p.fecha, extra: p.fechaEntrega ? 'Entrega: ' + fmtFecha(p.fechaEntrega) : '', lineas: ap.lineas.map(x => ({ d: x.descripcion, k: x.codigo, c: x.cantidad, pr: x.precioUsd, t: x.totalUsd })), base: ap.baseUsd, iva: ap.ivaUsd, total: ap.totalUsd, bs: ap.totalBs, nota: '' }; }
+  const t = totalesPedido(p), lp = t.lista, num = ack && ack.numero ? ack.numero : '';
+  return { titulo: 'PRESUPUESTO' + (num ? ' ' + num : ''), cliente: c, fecha: p.fecha, extra: 'Vigente hasta: ' + fmtFecha(p.vigenteHasta),
+    lineas: p.lineas.map(x => { const a = artDe(x.productoId), pr = a && a.precios ? a.precios[lp] : null; return { d: a ? a.descripcion : '(artículo)', k: a ? a.codigo : '', c: x.cantidad, pr, t: pr == null ? null : Math.round(Number(x.cantidad) * pr * 100) / 100 }; }),
+    base: t.base, iva: t.iva, total: t.total, bs: datos.tasa ? Math.round(t.total * datos.tasa.valor * 100) / 100 : null, nota: 'Presupuesto sujeto a confirmación de existencia y precios.' };
+}
+function dibujarDocumento(m) {
+  const W = 800, M = 36, cv = document.createElement('canvas'), medir = cv.getContext('2d'); medir.font = '15px sans-serif';
+  const partir = (txt, ancho) => { const pal = String(txt).split(' '), out = []; let cur = ''; pal.forEach(w => { const prueba = cur ? cur + ' ' + w : w; if (medir.measureText(prueba).width > ancho && cur) { out.push(cur); cur = w; } else cur = prueba; }); if (cur) out.push(cur); return out; };
+  const cols = { cant: W - M - 300, pr: W - M - 170, tot: W - M }, anchoDesc = cols.cant - M - 60;
+  const filas = m.lineas.map(l => ({ l, txt: partir(l.d, anchoDesc) })), altoFilas = filas.reduce((t, f) => t + 24 + f.txt.length * 20, 0);
+  cv.width = W; cv.height = 250 + altoFilas + 190 + (m.nota ? 30 : 0);
+  const g = cv.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, W, cv.height);
+  g.fillStyle = '#0f766e'; g.fillRect(0, 0, W, 78); g.fillStyle = '#fff'; g.font = 'bold 24px sans-serif'; g.fillText(m.titulo, M, 36); g.font = '15px sans-serif'; g.fillText(cfg.empresa || '', M, 62);
+  g.fillStyle = '#0f172a'; g.font = 'bold 18px sans-serif'; g.fillText('Cliente: ' + (m.cliente ? m.cliente.nombre : ''), M, 112);
+  g.font = '15px sans-serif'; g.fillStyle = '#475569'; g.fillText('Fecha: ' + fmtFecha(m.fecha) + (m.extra ? ' · ' + m.extra : ''), M, 136); if (m.cliente && m.cliente.documento) g.fillText('RIF / C.I.: ' + m.cliente.documento, M, 158);
+  let y = 184; g.fillStyle = '#e2e8f0'; g.fillRect(M, y, W - 2 * M, 26); g.fillStyle = '#334155'; g.font = 'bold 14px sans-serif'; g.fillText('Artículo', M + 8, y + 18); g.textAlign = 'right'; g.fillText('Cant.', cols.cant, y + 18); g.fillText('Precio $', cols.pr, y + 18); g.fillText('Total $', cols.tot - 6, y + 18); g.textAlign = 'left'; y += 26;
+  filas.forEach(f => { g.fillStyle = '#0f172a'; g.font = '15px sans-serif'; f.txt.forEach((t, i) => g.fillText(t, M + 8, y + 22 + i * 20));
+    const yy = y + 22; g.textAlign = 'right'; g.fillText(fmt(f.l.c, f.l.c % 1 ? 2 : 0), cols.cant, yy); g.fillText(f.l.pr == null ? '—' : fmt(f.l.pr), cols.pr, yy); g.fillText(f.l.t == null ? '—' : fmt(f.l.t), cols.tot - 6, yy); g.textAlign = 'left';
+    const h = 24 + f.txt.length * 20 - 20 + 4; g.fillStyle = '#64748b'; g.font = '12px sans-serif'; g.fillText(f.l.k || '', M + 8, y + 22 + f.txt.length * 20 - 4 + 0); y += 24 + f.txt.length * 20; g.strokeStyle = '#e2e8f0'; g.beginPath(); g.moveTo(M, y); g.lineTo(W - M, y); g.stroke(); });
+  y += 24; g.textAlign = 'right'; g.fillStyle = '#334155'; g.font = '16px sans-serif'; g.fillText('Base: $ ' + fmt(m.base), W - M - 6, y); y += 24; g.fillText('IVA: $ ' + fmt(m.iva), W - M - 6, y); y += 32;
+  g.fillStyle = '#0f766e'; g.font = 'bold 22px sans-serif'; g.fillText('Total: $ ' + fmt(m.total), W - M - 6, y); if (m.bs != null) { y += 26; g.font = '16px sans-serif'; g.fillText('Bs ' + fmt(m.bs), W - M - 6, y); }
+  g.textAlign = 'left'; y += 40; g.fillStyle = '#475569'; g.font = '14px sans-serif'; if (m.nota) { g.fillText(m.nota, M, y); y += 26; } g.fillText('Atiende: ' + datos.vendedor.nombre, M, y);
+  return cv;
+}
+const nombreArchivoDoc = (m) => (m.titulo.replace(/[^\w-]+/g, '-').replace(/-+$/, '') + '-' + (m.cliente ? m.cliente.nombre.replace(/[^\w]+/g, '-').slice(0, 20) : '')).replace(/-+$/, '') + '.png';
+function imagenDocumento(p, ack) { const m = modeloDocumento(p, ack), cv = dibujarDocumento(m); return new Promise(res => cv.toBlob(b => res({ blob: b, nombre: nombreArchivoDoc(m), titulo: m.titulo }), 'image/png')); }
+async function compartirImagen(p, ack) {
+  const im = await imagenDocumento(p, ack); if (!im.blob) { aviso('No se pudo generar la imagen', true); return; }
+  const f = new File([im.blob], im.nombre, { type: 'image/png' });
+  if (navigator.canShare && navigator.canShare({ files: [f] })) { try { await navigator.share({ files: [f], title: im.titulo }); return; } catch (e) { if (e && e.name === 'AbortError') return; } }
+  descargarImagen(im);
+}
+function descargarImagen(im) { const a = document.createElement('a'); a.href = URL.createObjectURL(im.blob); a.download = im.nombre; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); aviso('Imagen guardada en descargas'); }
+
 /* ---------- Pedidos ---------- */
 const hoyLocal = () => new Date().toLocaleDateString('en-CA');
 const lista_de = (c) => { const ls = datos.listasPrecio || []; return (ls.find(l => l.id === (c && c.listaPrecioId)) || ls[0] || {}).id || ''; };
@@ -515,12 +553,13 @@ function vistaDetallePedido(p) {
   ${ap ? `<div class="tarjeta aviso-msg"><h3>Aprobado por la oficina${ap.editado ? ' (con cambios)' : ''}</h3><table><thead><tr><th>Artículo</th><th class="n">Cant.</th><th class="n">Precio</th><th class="n">Total $</th></tr></thead><tbody>${ap.lineas.map(l => `<tr><td>${esc(l.descripcion)}<div class="chico">${esc(l.codigo)}</div></td><td class="n">${fmt(l.cantidad, l.cantidad % 1 ? 2 : 0)}</td><td class="n">${fmt(l.precioUsd)}</td><td class="n">${fmt(l.totalUsd)}</td></tr>`).join('')}</tbody></table>
     <div class="fila total" style="margin-top:6px"><span>Total ${esc(ack.numero || '')}</span><span class="precio">$ ${fmt(ap.totalUsd)}</span></div><div class="chico" style="text-align:right">Bs ${fmt(ap.totalBs)}</div></div>` : ''}
   ${p.estado === 'pendiente' ? '<button class="p" id="btnReenviar">Enviar ahora</button>' : ''}
-  ${presu || ap ? '<button class="p" id="btnWaDoc">Enviar por WhatsApp al cliente</button><button class="s" id="btnCompDoc">Compartir…</button>' : ''}${presu ? '<button class="s" id="btnConvertir">Convertir en pedido</button>' : ''}
+  ${presu || ap ? '<button class="p" id="btnWaDoc">Enviar por WhatsApp al cliente</button><button class="s" id="btnCompDoc">Compartir texto…</button><button class="p" id="btnImgDoc">Compartir como imagen (WhatsApp, correo…)</button><button class="s" id="btnImgBajar">Descargar imagen</button>' : ''}${presu ? '<button class="s" id="btnConvertir">Convertir en pedido</button>' : ''}
   ${editable ? '<button class="s" id="btnEditarPed">Editar</button>' : ''}<button class="s" id="btnDuplicar">Hacer un ${presu ? 'presupuesto' : 'pedido'} nuevo igual</button>${editable || ['rechazado', 'invalido'].includes(e.k) ? '<button class="s peligro" id="btnEliminarPed">Eliminar del teléfono</button>' : ''}`;
   $('#atras').onclick = () => { vista.ped = null; pantallaPrincipal(); };
   const r = $('#btnReenviar'); if (r) r.onclick = () => enviarPendientes(true);
   const texto = () => presu ? textoPresupuesto(p) : textoPedidoAprobado(p, ack);
   const bw = $('#btnWaDoc'); if (bw) bw.onclick = () => enviarWhatsApp(texto(), c && c.telefono); const bc = $('#btnCompDoc'); if (bc) bc.onclick = () => compartirTexto(texto());
+  const bi = $('#btnImgDoc'); if (bi) bi.onclick = () => compartirImagen(p, ack); const bb = $('#btnImgBajar'); if (bb) bb.onclick = async () => descargarImagen(await imagenDocumento(p, ack));
   const cv = $('#btnConvertir'); if (cv) cv.onclick = () => { if (vencido) aviso('El presupuesto está vencido: el pedido tomará los precios de hoy'); nuevoPedido(p.clienteId, p, 'pedido'); };
   const ed = $('#btnEditarPed'); if (ed) ed.onclick = () => { borrador = { id: p.id, tipoDoc: p.tipoDoc || 'pedido', inicio: p.creado, origenPresupuesto: p.origenPresupuesto || '', clienteId: p.clienteId, fecha: p.fecha, fechaEntrega: p.fechaEntrega, observacion: p.observacion, lineas: p.lineas.map(l => ({ productoId: l.productoId, cantidad: l.cantidad })), picker: false, q: '' }; vista.ped = 'editor'; pantallaPrincipal(); };
   $('#btnDuplicar').onclick = () => nuevoPedido(p.clienteId, p, p.tipoDoc || 'pedido');
