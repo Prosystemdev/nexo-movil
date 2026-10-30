@@ -3,7 +3,7 @@
    - Los datos (datos.json.enc, AES-256-GCM) se guardan tal como llegan y se descifran en memoria al desbloquear.
    - Fuente de datos: Dropbox (si config.js tiene la clave de aplicación) o «Abrir archivo» manual. */
 'use strict';
-const VERSION_APP = '0.5.0';
+const VERSION_APP = '0.5.1';
 const CFG = window.NEXO_MOVIL || {};
 const $ = (s, r) => (r || document).querySelector(s);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -54,7 +54,7 @@ function pintar() {
   return pantallaPrincipal();
 }
 function pantallaEnlace(error) {
-  app().innerHTML = `<div class="centro"><h2>Nexo Movilidad</h2><p class="nota">Para empezar pega el <b>código de enlace</b> que te dio la oficina y elige un PIN. Esto se hace una sola vez.</p>
+  app().innerHTML = `<div class="centro"><img class="logo-login" src="img/nexo-horizontal-color.png" alt="Nexo"><h2 style="text-align:center">Nexo Movilidad</h2><p class="nota">Para empezar pega el <b>código de enlace</b> que te dio la oficina y elige un PIN. Esto se hace una sola vez.</p>
     <form id="fEnlace" autocomplete="off"><label for="codigo">Código de enlace</label><textarea id="codigo" rows="4" placeholder="NEXO1.…" spellcheck="false"></textarea>
     <label for="pin1">Elige un PIN (4 a 8 números)</label><input id="pin1" type="password" inputmode="numeric" maxlength="8" autocomplete="new-password">
     <label for="pin2">Repite el PIN</label><input id="pin2" type="password" inputmode="numeric" maxlength="8" autocomplete="new-password">
@@ -75,7 +75,7 @@ async function enlazar(codigo, p1, p2) {
   if (!datos) sincronizar(); // primera descarga
 }
 function pantallaPin(error) {
-  app().innerHTML = `<div class="centro"><h2>Nexo Movilidad</h2><p class="nota">${esc(cfg.empresa)}</p><form id="fPin"><label for="pin">PIN</label><input id="pin" type="password" inputmode="numeric" maxlength="8" autocomplete="current-password" autofocus>${error ? `<p class="err" id="err">${esc(error)}</p>` : ''}<button class="p" id="btnPin">Entrar</button></form><button class="s" id="btnNuevoCodigo">Olvidé mi PIN / tengo un código nuevo</button></div>`;
+  app().innerHTML = `<div class="centro"><img class="logo-login" src="img/nexo-horizontal-color.png" alt="Nexo"><h2 style="text-align:center">Nexo Movilidad</h2><p class="nota">${esc(cfg.empresa)}</p><form id="fPin"><label for="pin">PIN</label><input id="pin" type="password" inputmode="numeric" maxlength="8" autocomplete="current-password" autofocus>${error ? `<p class="err" id="err">${esc(error)}</p>` : ''}<button class="p" id="btnPin">Entrar</button></form><button class="s" id="btnNuevoCodigo">Olvidé mi PIN / tengo un código nuevo</button></div>`;
   $('#btnNuevoCodigo').onclick = () => pantallaEnlace();
   $('#fPin').onsubmit = async (ev) => { ev.preventDefault(); const pin = $('#pin').value; const ck = await claveDePin(pin, b64.d(cfg.salt)); try { sec = await abrir(cfg.sec, ck); pinKey = ck; ultimoToque = Date.now(); await cargarDatosGuardados(); await procesarRetornoDropbox(); pintar(); enviarPendientes(false); } catch (e) { pantallaPin('PIN incorrecto.'); } };
 }
@@ -429,7 +429,7 @@ function dibujarDocumento(m) {
   const filas = m.lineas.map(l => ({ l, txt: partir(l.d, anchoDesc) })), altoFilas = filas.reduce((t, f) => t + 24 + f.txt.length * 20, 0);
   cv.width = W; cv.height = 250 + altoFilas + 190 + (m.nota ? 30 : 0);
   const g = cv.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, W, cv.height);
-  g.fillStyle = '#0f766e'; g.fillRect(0, 0, W, 78); g.fillStyle = '#fff'; g.font = 'bold 24px sans-serif'; g.fillText(m.titulo, M, 36); g.font = '15px sans-serif'; g.fillText(cfg.empresa || '', M, 62);
+  g.fillStyle = '#14653a'; g.fillRect(0, 0, W, 78); g.fillStyle = '#fff'; g.font = 'bold 24px sans-serif'; g.fillText(m.titulo, M, 36); g.font = '15px sans-serif'; g.fillText(cfg.empresa || '', M, 62);
   g.fillStyle = '#0f172a'; g.font = 'bold 18px sans-serif'; g.fillText('Cliente: ' + (m.cliente ? m.cliente.nombre : ''), M, 112);
   g.font = '15px sans-serif'; g.fillStyle = '#475569'; g.fillText('Fecha: ' + fmtFecha(m.fecha) + (m.extra ? ' · ' + m.extra : ''), M, 136); if (m.cliente && m.cliente.documento) g.fillText('RIF / C.I.: ' + m.cliente.documento, M, 158);
   let y = 184; g.fillStyle = '#e2e8f0'; g.fillRect(M, y, W - 2 * M, 26); g.fillStyle = '#334155'; g.font = 'bold 14px sans-serif'; g.fillText('Artículo', M + 8, y + 18); g.textAlign = 'right'; g.fillText('Cant.', cols.cant, y + 18); g.fillText('Precio $', cols.pr, y + 18); g.fillText('Total $', cols.tot - 6, y + 18); g.textAlign = 'left'; y += 26;
@@ -437,7 +437,7 @@ function dibujarDocumento(m) {
     const yy = y + 22; g.textAlign = 'right'; g.fillText(fmt(f.l.c, f.l.c % 1 ? 2 : 0), cols.cant, yy); g.fillText(f.l.pr == null ? '—' : fmt(f.l.pr), cols.pr, yy); g.fillText(f.l.t == null ? '—' : fmt(f.l.t), cols.tot - 6, yy); g.textAlign = 'left';
     const h = 24 + f.txt.length * 20 - 20 + 4; g.fillStyle = '#64748b'; g.font = '12px sans-serif'; g.fillText(f.l.k || '', M + 8, y + 22 + f.txt.length * 20 - 4 + 0); y += 24 + f.txt.length * 20; g.strokeStyle = '#e2e8f0'; g.beginPath(); g.moveTo(M, y); g.lineTo(W - M, y); g.stroke(); });
   y += 24; g.textAlign = 'right'; g.fillStyle = '#334155'; g.font = '16px sans-serif'; g.fillText('Base: $ ' + fmt(m.base), W - M - 6, y); y += 24; g.fillText('IVA: $ ' + fmt(m.iva), W - M - 6, y); y += 32;
-  g.fillStyle = '#0f766e'; g.font = 'bold 22px sans-serif'; g.fillText('Total: $ ' + fmt(m.total), W - M - 6, y); if (m.bs != null) { y += 26; g.font = '16px sans-serif'; g.fillText('Bs ' + fmt(m.bs), W - M - 6, y); }
+  g.fillStyle = '#14653a'; g.font = 'bold 22px sans-serif'; g.fillText('Total: $ ' + fmt(m.total), W - M - 6, y); if (m.bs != null) { y += 26; g.font = '16px sans-serif'; g.fillText('Bs ' + fmt(m.bs), W - M - 6, y); }
   g.textAlign = 'left'; y += 40; g.fillStyle = '#475569'; g.font = '14px sans-serif'; if (m.nota) { g.fillText(m.nota, M, y); y += 26; } g.fillText('Atiende: ' + datos.vendedor.nombre, M, y);
   return cv;
 }
